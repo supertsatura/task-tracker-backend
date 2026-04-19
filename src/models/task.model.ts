@@ -107,64 +107,44 @@
 
 // Creating a model
 
-import { DataTypes, Model, Optional } from 'sequelize';
-import { sequelize } from '../db/database';
+import {DataTypes, Model, Optional} from 'sequelize';
+import {sequelize} from '../db/database';
+
+// Enum for priority field
+export enum TaskPriority {
+    Low = 'Низкая',
+    Medium = 'Средняя',
+    High = 'Высокая'
+}
 
 // 1. Interface describing ALL model attributes
 export interface TaskAttributes {
     id: number;
-    name?: 'низкая' | 'средняя' | 'высокая' | 'очень высокая';
     description: string;
+    deadlineAt: Date;
     comment?: string | null;
+    priority: TaskPriority;
     status: boolean;
-    deadline: Date;
-    dateOfComplete?: Date | null;
-
-    // virtual fields (getter methods)
-    isOver?: boolean;
-    isDone?: string;
-    formattedDeadline?: string;
+    completedAt?: Date | null;
 }
 
 // 2. Attributes required for creation
-export type TaskCreationAttributes = Optional<TaskAttributes, 'id' | 'comment' | 'dateOfComplete'>;
+export type TaskCreationAttributes = Optional<TaskAttributes, 'id' | 'comment' | 'priority' | 'status' | 'completedAt'>;
 
 // 3. Sequelize Model class
 export class Task
-    extends Model<TaskAttributes, TaskCreationAttributes> implements TaskAttributes
-{
+    extends Model<TaskAttributes, TaskCreationAttributes> implements TaskAttributes {
     public id!: number;
-    public name?: 'низкая' | 'средняя' | 'высокая' | 'очень высокая';
     public description!: string;
+    public deadlineAt!: Date;
     public comment?: string | null;
+    public priority!: TaskPriority;
     public status!: boolean;
-    public deadline!: Date;
-    public dateOfComplete?: Date | null;
+    public completedAt?: Date | null;
 
     // timestamps added by Sequelize
     public readonly createdAt!: Date;
     public readonly updatedAt!: Date;
-
-    // Virtual getters typings
-    public get isOver(): boolean {
-        return !this.status && this.deadline < new Date();
-    }
-
-    public get isDone(): string {
-        if (this.status) return 'Задача выполнена в срок.';
-        if (this.isOver) return 'Задача просрочена.';
-        return 'Задача в работе.';
-    }
-
-    public get formattedDeadline(): string {
-        return this.deadline.toLocaleString('ru-RU', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-        });
-    }
 }
 
 // 4. Model initialization
@@ -178,27 +158,6 @@ Task.init(
             comment: 'Task identifier',
         },
 
-        name: {
-            type: DataTypes.ENUM(
-                'низкая',
-                'средняя',
-                'высокая',
-                'очень высокая'
-            ),
-            allowNull: true,
-            defaultValue: 'низкая',
-
-            // Sequelize validation
-            validate: {
-                isIn: {
-                    args: [['низкая', 'средняя', 'высокая', 'очень высокая']],
-                    msg: 'Priority must be valid',
-                },
-            },
-
-            comment: 'Task priority level',
-        },
-
         description: {
             type: DataTypes.TEXT,
             allowNull: false,
@@ -210,6 +169,20 @@ Task.init(
             },
 
             comment: 'Task description',
+        },
+
+        deadlineAt: {
+            type: DataTypes.DATEONLY,
+            allowNull: false,
+
+            validate: {
+                isDate: {
+                    args: true,
+                    msg: 'Value must be a date'
+                },
+            },
+
+            comment: 'Task deadline',
         },
 
         comment: {
@@ -227,37 +200,30 @@ Task.init(
             comment: 'Task comment',
         },
 
+        priority: {
+            type: DataTypes.ENUM(...Object.values(TaskPriority)),
+            allowNull: true,
+            defaultValue: TaskPriority.Medium,
+
+            // Sequelize validation
+            validate: {
+                isIn: {
+                    args: [Object.values(TaskPriority)],
+                    msg: 'Priority must be one of: ' + Object.values(TaskPriority).join(', '),
+                },
+            },
+
+            comment: 'Task priority',
+        },
+
         status: {
             type: DataTypes.BOOLEAN,
-            allowNull: false,
+            allowNull: true,
             defaultValue: false,
             comment: 'Task completion status',
         },
 
-        deadline: {
-            type: DataTypes.DATE,
-            allowNull: false,
-
-            validate: {
-                isDate: {
-                    args: true,
-                    msg: 'Value must be a date'
-                },
-
-                // custom validator
-                isFuture(value: Date) {
-                    if (value < new Date()) {
-                        throw new Error(
-                            'Cannot create task with past deadline'
-                        );
-                    }
-                },
-            },
-
-            comment: 'Task deadline',
-        },
-
-        dateOfComplete: {
+        completedAt: {
             type: DataTypes.DATE,
             allowNull: true,
             defaultValue: null,
@@ -269,18 +235,10 @@ Task.init(
         tableName: 'tasks',
         underscored: true,
         timestamps: true,
-
-        // Hooks
         hooks: {
-            beforeUpdate(task: Task) {
-                // If task becomes completed → set completion date
-                if (task.changed('status') && task.status === true) {
-                    task.dateOfComplete = new Date();
-                }
-
-                // If task marked unfinished → remove completion date
-                if (task.changed('status') && task.status === false) {
-                    task.dateOfComplete = null;
+            beforeUpdate: async (task) => {
+                if (task.changed('status')) {
+                    task.completedAt = task.status ? new Date() : null;
                 }
             },
         },

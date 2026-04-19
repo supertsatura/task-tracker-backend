@@ -15,10 +15,8 @@ export const sequelize = new Sequelize({
 
     // SQL logging in development only
     logging:
-        config.nodeEnv === 'development'
-            ? (sql) => logger.debug('SQL', {sql})
-            : false,
-
+        config.nodeEnv === 'development' ?
+            (sql) => logger.debug('SQL', {sql}) : false,
     pool: {
         max: 10,
         min: 0,
