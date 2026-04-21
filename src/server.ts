@@ -30,14 +30,15 @@ interface CreateTaskCallback {
 
 io.on("connection", (socket: Socket) => {
     console.log('User connected', socket.id);
-
     socket.emit('serverMessage', 'Connection is successful');
-
     socket.on('createTask', async (payload: CreateTaskPayload, callback?: CreateTaskCallback) => {
         try {
             const {description, deadlineAt, comment, priority} = payload;
             if (!description || !deadlineAt) {
-                throw new Error('Description and deadline are required');
+                const errorMsg = 'Description and deadline are required';
+                socket.emit('taskCreationError', {success: false, error: errorMsg});
+                if (callback) callback({success: false, error: errorMsg});
+                return;
             }
             const task = await Task.create({
                 description,
@@ -45,21 +46,13 @@ io.on("connection", (socket: Socket) => {
                 comment,
                 priority,
             });
-
             socket.emit('taskCreated', task);
-
-            if (callback) {
-                callback({success: true, task});
-            }
+            if (callback) callback({success: true, task});
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            console.error('Task creation error:', errorMessage);
-
-            socket.emit('taskCreationError', { error: errorMessage });
-
-            if (callback) {
-                callback({ success: false, error: errorMessage });
-            }
+            const errorMsg = error instanceof Error ? error.message : 'Internal server error';
+            console.error(`Task creation error for payload ${JSON.stringify(payload)}:`, errorMsg);
+            socket.emit('taskCreationError', {success: false, error: errorMsg});
+            if (callback) callback({success: false, error: errorMsg});
         }
     });
 
