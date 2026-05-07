@@ -1,6 +1,7 @@
 import express from 'express';
 import http from 'http';
 import {Server, Socket} from 'socket.io';
+import {Op} from 'sequelize';
 import {initDatabase, closeDatabase} from "./db/database";
 import Task, {TaskCreationAttributes} from "./models/task.model";
 
@@ -18,46 +19,117 @@ const io = new Server(server, {
 });
 
 interface CreateTaskPayload {
-    description: string;
+    title: string;
+    description?: string;
     deadlineAt: Date;
-    comment?: string;
     priority?: TaskCreationAttributes['priority'];
 }
 
+interface UpdateTaskPayload {
+    id: number;
+    status: boolean;
+}
+
+interface GetAllTasksCallback {
+    (response:
+     {
+         success: boolean;
+         tasks?: Task[];
+         error?: string
+     }): void;
+}
+
 interface CreateTaskCallback {
-    (response: { success: boolean; task?: Task; error?: string }): void;
+    (response:
+     {
+         success: boolean;
+         task?: Task;
+         error?: string
+     }): void;
 }
 
 io.on("connection", (socket: Socket) => {
     console.log('User connected', socket.id);
-    socket.emit('serverMessage', 'Connection is successful');
+
     socket.on('createTask', async (payload: CreateTaskPayload, callback?: CreateTaskCallback) => {
         try {
-            const {description, deadlineAt, comment, priority} = payload;
-            if (!description || !deadlineAt) {
-                const errorMsg = 'Description and deadline are required';
-                socket.emit('taskCreationError', {success: false, error: errorMsg});
+            const {title, description, deadlineAt, priority} = payload;
+            if (!title || !deadlineAt) {
+                const errorMsg = 'Title and deadline are required';
                 if (callback) callback({success: false, error: errorMsg});
                 return;
             }
             const task = await Task.create({
+                title,
                 description,
                 deadlineAt,
-                comment,
                 priority,
             });
-            socket.emit('taskCreated', task);
+            io.emit("taskCreated", task);
             if (callback) callback({success: true, task});
         } catch (error) {
             const errorMsg = error instanceof Error ? error.message : 'Internal server error';
             console.error(`Task creation error for payload ${JSON.stringify(payload)}:`, errorMsg);
-            socket.emit('taskCreationError', {success: false, error: errorMsg});
             if (callback) callback({success: false, error: errorMsg});
         }
     });
 
+    socket.on('getAllTasks', async (callback?: GetAllTasksCallback) => {
+        try {
+            const tasks = await Task.findAll({raw: true});
+            if (callback) callback({success: true, tasks});
+        } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : 'Internal server error';
+            console.error('Get all tasks error:', errorMsg);
+            if (callback) callback({success: false, error: errorMsg});
+        }
+    });
+
+    socket.on('getDoneTasks', async (callback?: GetAllTasksCallback) => {
+        try {
+            const tasks = await Task.findAll({where: {status: true}, raw: true});
+            if (callback) callback({success: true, tasks});
+        } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : 'Internal server error';
+            console.error('Get done tasks error:', errorMsg);
+            if (callback) callback({success: false, error: errorMsg});
+        }
+    })
+
+    socket.on('getOverdueTasks', async (callback?: GetAllTasksCallback) => {
+        try {
+            const today = new Date().toISOString().split('T')[0];
+            const tasks = await Task.findAll({
+                where: {status: false, deadlineAt: {[Op.lt]: today}}, raw: true
+            });
+            if (callback) callback({success: true, tasks});
+        } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : 'Internal server error';
+            console.error('Get overdue tasks error:', errorMsg);
+            if (callback) callback({success: false, error: errorMsg});
+        }
+    })
+
+    socket.on('updateTaskStatus', async (payload: UpdateTaskPayload, callback?: GetAllTasksCallback) => {
+        try {
+            const {id, status} = payload;
+            const task = await Task.findByPk(id);
+            if (!task) {
+                if (callback) callback({success: false, error: 'Задача не найдена'});
+                return;
+            }
+            task.status = status;
+            await task.save();
+            io.emit('taskUpdated', task.toJSON());
+            if (callback) callback({success: true});
+        } catch (error) {
+            const errMsg = error instanceof Error ? error.message : 'Internal server error';
+            if (callback) callback({success: false, error: errMsg});
+        }
+    });
+
     socket.on('disconnect', () => {
-        console.log('User disconnected');
+        console.log('User disconnected', socket.id);
     });
 });
 
